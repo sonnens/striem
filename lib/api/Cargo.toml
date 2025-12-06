@@ -1,0 +1,30 @@
+[package]
+name = "striem_api"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "striem_api"
+path = "src/main.rs"
+
+[dependencies]
+striem_common.workspace = true
+striem_config.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+duckdb.workspace = true
+erased-serde.workspace = true
+log.workspace = true
+r2d2.workspace = true
+rmcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sigmars.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tower-http.workspace = true
+uuid.workspace = true

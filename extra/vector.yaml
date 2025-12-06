@@ -1,0 +1,5 @@
+schema:
+  log_namespace: true
+provider:
+  type: http
+  url: http://striem:8080/vector
