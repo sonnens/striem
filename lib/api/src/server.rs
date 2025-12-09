@@ -1,3 +1,17 @@
+//! HTTP API server for StrIEM management interface.
+//!
+//! Provides REST endpoints for:
+//! - Source management (add/remove data sources)
+//! - Detection rule management (list/enable/disable/upload)
+//! - Data querying (DuckDB SQL queries on Parquet files)
+//! - Vector configuration generation
+//!
+//! # Architecture
+//! - Axum for HTTP routing and middleware
+//! - Tower HTTP for CORS and static file serving
+//! - DuckDB connection pool for query execution
+//! - Shared state (Arc) for detection rules and configuration
+
 use crate::actions::Mcp;
 use crate::{ApiState, routes::create_router};
 use anyhow::Result;
@@ -11,6 +25,16 @@ use striem_config::StringOrList;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
+/// Initialize and run the API server.
+///
+/// # Database Initialization
+/// Creates DuckDB connection pool if storage is configured.
+/// Uses file-backed DB if data_dir specified, otherwise in-memory.
+/// Enables parquet_metadata_cache for faster queries on large datasets.
+///
+/// # UI Serving
+/// Serves Next.js static export from binary path or configured ui.path.
+/// Redirects / to /ui for convenience.
 pub async fn serve(
     config: &StrIEMConfig,
     detections: Arc<RwLock<SigmaCollection>>,
@@ -28,6 +52,9 @@ pub async fn serve(
         .as_ref()
         .or_else(|| config.storage.as_ref().map(|s| &s.path));
 
+    // Create DuckDB connection pool with metadata caching enabled
+    // Metadata cache significantly improves query performance on large Parquet datasets
+    // by avoiding repeated schema reads
     let db = if let Some(data_dir) = data_dir {
         std::fs::create_dir_all(data_dir)
             .map_err(anyhow::Error::from)
@@ -86,6 +113,8 @@ pub async fn serve(
         .as_ref()
         .and_then(|ui| if ui.enabled { ui.path.clone() } else { None })
         .map(std::path::PathBuf::from)
+        // Fallback: look for 'ui' directory next to binary (production deployment)
+        // This supports cargo build integration where UI is copied to target/ui
         .or_else(|| {
             std::env::current_exe()
                 .map_err(anyhow::Error::from)

@@ -1,3 +1,15 @@
+//! Sigma rule detection engine.
+//!
+//! Evaluates streaming events against loaded Sigma rules and generates
+//! OCSF detection_finding events (class_uid 2004) for matches.
+//!
+//! # Event Processing
+//! 1. Receive batched events from Vector server
+//! 2. Extract logsource metadata for rule filtering
+//! 3. Use raw_data field if available (pre-normalization log)
+//! 4. Evaluate against matching Sigma rules
+//! 5. Generate detection finding with correlation to original event
+
 use anyhow::Result;
 
 use log::{error, info, trace};
@@ -9,6 +21,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 
+/// Background task processing events through the Sigma detection engine.
 pub(crate) struct DetectionHandler {
     src: broadcast::Receiver<Arc<Vec<Event>>>,
     dest: broadcast::Sender<Arc<Vec<Event>>>,
@@ -31,6 +44,11 @@ impl DetectionHandler {
         }
     }
 
+    /// Main event processing loop with graceful shutdown support.
+    ///
+    /// # Error Handling
+    /// Individual event processing errors are logged but don't halt the loop.
+    /// This ensures one malformed event doesn't stop detection for all events.
     pub(crate) async fn run(&mut self) {
         loop {
             tokio::select! {
@@ -40,6 +58,7 @@ impl DetectionHandler {
                 },
                 result = self.src.recv() => {
                     if let Ok(events) = result {
+                        // Process each event independently to isolate failures
                         for event in events.iter() {
                             if let Err(e) = self.apply(event).await {
                                 error!("error applying detection rules: {}", e);
@@ -54,13 +73,27 @@ impl DetectionHandler {
         }
     }
 
+    /// Evaluate event against Sigma rules and emit detection findings.
+    ///
+    /// # Raw Data Handling
+    /// If event is OCSF-normalized (metadata.ocsf = true) with raw_data field,
+    /// rules are evaluated against the original vendor log format.
+    /// This allows Sigma rules written for vendor formats to work with normalized data.
+    ///
+    /// # Performance Consideration
+    /// Only acquires read lock on rules collection, allowing concurrent detection
+    /// across multiple events. Lock is explicitly dropped after matching to avoid
+    /// holding during detection finding generation.
     async fn apply(&self, event: &Event) -> Result<()> {
+        // Extract logsource for rule filtering (e.g., windows/sysmon, aws/cloudtrail)
         let filter = event
             .metadata
             .get("logsource")
             .map(|v| sigmars::event::LogSource::from(v.clone()))
             .unwrap_or_default();
 
+        // For OCSF events, prefer raw_data field for rule evaluation
+        // This allows vendor-specific Sigma rules to work post-normalization
         let raw_data = event
             .metadata
             .get("ocsf")
@@ -82,6 +115,7 @@ impl DetectionHandler {
 
         let rules = self.rules.read().await;
 
+        // Get matching rules and convert to OCSF detection_finding events
         let detections = rules
             .get_matches_from_ref(&sigma_event)
             .await
@@ -89,6 +123,8 @@ impl DetectionHandler {
             .iter()
             .filter_map(|d| rules.get(d))
             .filter_map(|d| {
+                // Establish correlation between detection and original event
+                // Uses OCSF metadata.uid if present, falls back to StrIEM's event ID
                 let correlation_uid = event
                     .data
                     .as_object()
@@ -101,6 +137,7 @@ impl DetectionHandler {
 
                 let mut ocsf = Event::default();
 
+                // Convert Sigma detection to OCSF detection_finding (class_uid 2004)
                 let mut data: Value = d.into();
                 data["metadata"]["uid"] = json!(event.id.to_string());
                 data["metadata"]["correlation_uid"] = json!(correlation_uid);

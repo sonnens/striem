@@ -1,3 +1,13 @@
+//! Configuration management for StrIEM.
+//!
+//! Supports loading from:
+//! - YAML configuration files
+//! - Environment variables (STRIEM_ prefix)
+//! - Defaults
+//!
+//! Environment variables override file settings, enabling Docker/K8s deployments
+//! without rebuilding config files.
+
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use url::Url;
 
@@ -12,6 +22,8 @@ pub mod storage;
 
 mod tests;
 
+/// Configuration value that accepts either a single string or array of strings.
+/// Enables flexible YAML syntax: `detections: ./rules` or `detections: [./rules1, ./rules2]`
 #[derive(Debug, PartialEq, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum StringOrList {
@@ -19,6 +31,12 @@ pub enum StringOrList {
     List(Vec<String>),
 }
 
+/// Host configuration with address/URL reconciliation.
+///
+/// # Reconciliation Logic
+/// Automatically synchronizes port between SocketAddr and URL.
+/// If URL is localhost/127.0.0.1, port is updated to match SocketAddr.
+/// This allows "address: 0.0.0.0:8080" to imply "url: http://localhost:8080".
 #[derive(Debug, Deserialize, Clone)]
 pub struct HostConfig {
     #[serde(default = "HostConfig::default_address")]
@@ -51,6 +69,14 @@ impl HostConfig {
         self
     }
 
+    /// Synchronize port between address and URL for localhost/loopback addresses.
+    ///
+    /// # Use Case
+    /// When user specifies only `address: 0.0.0.0:3000`, infer that
+    /// `url: http://localhost:3000` for generating Vector configs.
+    ///
+    /// Only updates URL port if host is localhost/127.0.0.1 to avoid
+    /// breaking external/cluster URLs.
     pub fn reconcile(&mut self) {
         if self.address.port() == 0 {
             if let Some(port) = self.url.port() {

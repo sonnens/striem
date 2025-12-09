@@ -1,3 +1,16 @@
+//! JSON to Arrow RecordBatch conversion.
+//!
+//! Converts OCSF JSON events to Arrow RecordBatches matching Parquet schemas.
+//! Handles type coercion, missing fields, and nested structures.
+//!
+//! # Error Handling Philosophy
+//! - Required fields: Hard error if missing
+//! - Optional fields: Insert null and log warning
+//! - Type mismatches: Insert null for nullable fields, error for required
+//!
+//! This "graceful degradation" prevents one malformed field from
+//! dropping an entire event, while preserving data integrity.
+
 use std::sync::Arc;
 
 use arrow::{
@@ -13,7 +26,12 @@ use arrow::{
 };
 use serde_json::Value;
 
-/// Converts a JSON object into a RecordBatch with schema
+/// Convert a JSON object to RecordBatch matching the provided schema.
+///
+/// # Schema Matching
+/// Iterates over schema fields and extracts corresponding JSON values.
+/// Fields present in JSON but not in schema are silently dropped.
+/// This allows events to carry extra metadata without breaking writes.
 pub fn convert_json(data: &Value, schema: &SchemaRef) -> Result<RecordBatch> {
     let obj = data.as_object().ok_or_else(|| {
         ArrowError::ParseError("Expected JSON object at the top level".to_string())
@@ -28,7 +46,13 @@ pub fn convert_json(data: &Value, schema: &SchemaRef) -> Result<RecordBatch> {
     RecordBatch::try_new(schema.clone(), arrays)
 }
 
-/// Builds an arrow Array from a JSON value
+/// Build an Arrow array from a JSON value, handling nulls and type mismatches.
+///
+/// # Design Choice: Null vs Error
+/// For nullable fields with wrong types, inserts null and logs warning.
+/// This preserves as much data as possible while signaling schema issues.
+///
+/// Required fields fail hard to catch integration problems early.
 fn build_array(value: Option<&Value>, field: &Field) -> Result<ArrayRef> {
     match value {
         None => {
@@ -39,6 +63,8 @@ fn build_array(value: Option<&Value>, field: &Field) -> Result<ArrayRef> {
                 )));
             }
 
+            // Create appropriately-typed null value for schema
+            // List and Struct nulls require special handling to maintain child schema
             match field.data_type() {
                 DataType::List(child_field) => {
                     let data = arrow::array::ArrayData::builder(field.data_type().clone())
@@ -63,6 +89,8 @@ fn build_array(value: Option<&Value>, field: &Field) -> Result<ArrayRef> {
             DataType::Int32 => {
                 let mut builder = Int32Builder::new();
                 if let Some(n) = v.as_i64() {
+                    // Check for overflow: JSON numbers are i64, schema may be i32
+                    // Insert null for nullable fields rather than truncating incorrectly
                     if n < i32::MIN as i64 || n > i32::MAX as i64 {
                         if field.is_nullable() {
                             eprintln!(

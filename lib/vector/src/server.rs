@@ -1,3 +1,12 @@
+//! Vector gRPC server implementation.
+//!
+//! Implements Vector's protocol for receiving events via gRPC.
+//! Only supports log events; metric and trace events are rejected.
+//!
+//! # Protocol
+//! Vector sends PushEventsRequest with batches of events.
+//! Server broadcasts to subscribers (detection handler, storage backend).
+
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -19,6 +28,15 @@ struct VectorService {
 
 #[tonic::async_trait]
 impl Vector for VectorService {
+    /// Receive and broadcast log events to subscribers.
+    ///
+    /// # Event Type Filtering
+    /// Only log events are supported. Metrics and traces are rejected
+    /// with UNIMPLEMENTED status to fail fast rather than silently drop.
+    ///
+    /// # Broadcasting
+    /// Events are Arc-wrapped before sending to minimize cloning overhead
+    /// with multiple subscribers (detection + storage + potential Vector client).
     async fn push_events(
         &self,
         request: tonic::Request<vector::PushEventsRequest>,
@@ -63,6 +81,8 @@ impl Vector for VectorService {
     }
 }
 
+/// Vector gRPC server with broadcast channel for subscribers.
+/// Channel is created at construction but not started until serve() is called.
 pub struct Server {
     service: Option<VectorService>,
 }
@@ -74,6 +94,12 @@ impl Default for Server {
 }
 
 impl Server {
+    /// Create server with 256-event buffer capacity.
+    ///
+    /// # Buffer Sizing
+    /// 256 provides backpressure for slow subscribers without excessive memory.
+    /// Vector batches events, so this represents ~10-50 batches depending on
+    /// Vector's batch settings.
     pub fn new() -> Self {
         Self {
             service: Some(VectorService {

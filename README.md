@@ -58,6 +58,9 @@ The fastest way to get started is using Docker Compose:
 git clone https://github.com/sonnens/striem.git
 cd striem
 
+# Clone OCSF VRL transforms for data normalization
+git clone https://github.com/crowdalert/ocsf-vrl.git data/remaps
+
 # Start all services
 docker-compose up -d
 
@@ -72,6 +75,13 @@ This will start:
 ### Building from Source
 
 ```bash
+# Clone the repository
+git clone https://github.com/sonnens/striem.git
+cd striem
+
+# Clone OCSF VRL transforms for data normalization
+git clone https://github.com/crowdalert/ocsf-vrl.git data/remaps
+
 # Build the Rust backend
 cargo build --release
 
