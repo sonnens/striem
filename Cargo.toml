@@ -3,15 +3,6 @@ name = "striem"
 version = "0.1.0"
 edition = "2024"
 
-[workspace]
-members = [
-  ".",
-  "lib/api",
-  "lib/common",
-  "lib/config",
-  "lib/storage",
-  "lib/vector"]
-
 [dependencies]
 striem_api.workspace = true
 striem_common.workspace = true
@@ -32,6 +23,20 @@ serde_yaml.workspace = true
 sigmars.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+
+[features]
+default = ["duckdb"]
+duckdb = ["striem_api/duckdb"]
+sqlite = ["striem_api/sqlite"]
+
+[workspace]
+members = [
+  ".",
+  "lib/api",
+  "lib/common",
+  "lib/config",
+  "lib/storage",
+  "lib/vector"]
 
 [workspace.dependencies]
 
@@ -61,9 +66,11 @@ parquet = { version = "56.2", features = ["json", "async", "tokio"] }
 prost = { version = "0.13" }
 prost-types = "0.13"
 r2d2 = "0.8"
+r2d2_sqlite = "0.31"
 regex = "1.11"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 rmcp = { version = "0.8", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
+rusqlite = "0.37"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"

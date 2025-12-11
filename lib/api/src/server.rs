@@ -12,18 +12,28 @@
 //! - DuckDB connection pool for query execution
 //! - Shared state (Arc) for detection rules and configuration
 
-use crate::actions::Mcp;
-use crate::{ApiState, routes::create_router};
+use std::sync::Arc;
+
 use anyhow::Result;
+use axum::middleware;
 use log::info;
 use sigmars::SigmaCollection;
 use tokio::sync::RwLock;
-use std::sync::Arc;
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
+
 use striem_common::prelude::*;
 use striem_config::StrIEMConfig;
 use striem_config::StringOrList;
-use tower_http::cors::CorsLayer;
-use tower_http::services::ServeDir;
+
+use crate::{actions::Mcp,
+    db_pool,
+    ApiState,
+    features::{feature_flag_middleware, FEATURE_FLAGS},
+    routes::create_router,
+    sources::SOURCES,
+    persistence as persist
+};
 
 /// Initialize and run the API server.
 ///
@@ -46,39 +56,22 @@ pub async fn serve(
         None
     };
 
-    let data_dir = config
-        .api
-        .data
-        .as_ref()
-        .or_else(|| config.storage.as_ref().map(|s| &s.path));
+    // Create DB connection pool
+    let db = db_pool(config)
+    .inspect(|_| {
+        FEATURE_FLAGS.write().map(|mut flags| {
+            if !flags.contains(&"persistence".to_string()) {
+                flags.push("persistence".to_string());
+            }
+        }).ok();
+    });
 
-    // Create DuckDB connection pool with metadata caching enabled
-    // Metadata cache significantly improves query performance on large Parquet datasets
-    // by avoiding repeated schema reads
-    let db = if let Some(data_dir) = data_dir {
-        std::fs::create_dir_all(data_dir)
-            .map_err(anyhow::Error::from)
-            .and_then(|_| {
-                let path = format!("{}/striem.db", data_dir);
-                duckdb::DuckdbConnectionManager::file_with_flags(
-                    path.as_str(),
-                    duckdb::Config::default().with("parquet_metadata_cache", "true")?,
-                )
-                .map_err(anyhow::Error::from)
-                .and_then(|db| Ok(r2d2::Pool::builder().build(db)?))
-                .map_err(anyhow::Error::from)
-            })
-            .ok()
-    } else if let Some(_) = &config.storage {
-        duckdb::DuckdbConnectionManager::memory_with_flags(
-            duckdb::Config::default().with("parquet_metadata_cache", "true")?,
-        )
-        .map_err(anyhow::Error::from)
-        .and_then(|db| Ok(r2d2::Pool::builder().build(db)?))
-        .map_err(anyhow::Error::from)
-        .ok()
-    } else {
-        None
+    if let Some(db) = db.as_ref() {
+        // Initialize persistence layer
+        let mut conn = db.get()?;
+        persist::init(&mut conn)?;
+        let mut sources = SOURCES.write().await;
+        sources.append(&mut persist::get_all_sources(&mut conn)?);
     };
 
     let actions = if let Some(mcp_config) = &config.api.mcp {
@@ -91,7 +84,14 @@ pub async fn serve(
         }
     } else {
         None
-    };
+    }
+    .inspect(|_| {
+        FEATURE_FLAGS.write().map(|mut flags| {
+            if !flags.contains(&"mcp".to_string()) {
+                flags.push("mcp".to_string());
+            }
+        }).ok();
+    });
 
     let fqdn = match config.fqdn.as_ref() {
         Some(fqdn) => fqdn.clone(),
@@ -124,8 +124,10 @@ pub async fn serve(
         })
         .filter(|p| p.exists());
 
+    
     let mut app = create_router()
         .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(feature_flag_middleware))
         .with_state(ApiState {
             detections,
             actions,

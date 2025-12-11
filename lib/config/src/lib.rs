@@ -100,22 +100,38 @@ impl HostConfig {
     }
 }
 
+const PWD: fn() -> String = || std::env::current_dir().and_then(|p| Ok(p.to_string_lossy().into()))
+    .unwrap_or_else(|_| ".".into());
+
 #[derive(Debug, Deserialize, Default, Clone)]
 struct StrIEMConfigOptions {
+
+    /// Path to the StrIEM source configuration & rule database
+    /// (defaults to current working directory)
+    #[serde(default = "PWD")]
+    db: String,
+
+    /// Location of top-level Sigma detection directory
+    /// (can be a list or single path)
     #[serde(with = "serde_yaml::with::singleton_map")]
     detections: Option<StringOrList>,
 
+    /// Input listener configuration
     #[serde(with = "serde_yaml::with::singleton_map")]
     input: Option<input::Listener>,
 
+    /// Output destination configuration
     #[serde(with = "serde_yaml::with::singleton_map")]
     output: Option<output::Destination>,
 
+    /// Storage backend configuration
     #[serde(with = "serde_yaml::with::singleton_map")]
     storage: Option<storage::StorageConfig>,
 
+    /// API server configuration
     api: Option<api::ApiConfig>,
 
+    /// Fully qualified domain name for this StrIEM instance
     fqdn: Option<String>,
 }
 

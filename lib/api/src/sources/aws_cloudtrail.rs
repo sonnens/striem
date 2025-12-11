@@ -68,8 +68,10 @@ pub struct SqsConfig {
 pub struct AwsCloudtrailConfig {
     #[serde(rename = "type")]
     _type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<AwsAuthentication>,
     pub sqs: SqsConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
     #[serde(default)]
     pub decoding: Decoding,
@@ -100,8 +102,8 @@ impl<'de> Deserialize<'de> for AwsCloudtrailConfig {
 }
 
 pub struct AwsCloudtrail {
-    id: String,
-    config: AwsCloudtrailConfig,
+   pub(super) id: String,
+    pub(super) config: AwsCloudtrailConfig,
 }
 
 impl Source for AwsCloudtrail {
@@ -148,7 +150,7 @@ impl Source for AwsCloudtrail {
 
 #[allow(dead_code)]
 async fn post_aws_cloudtrail_config(
-    State(_state): State<ApiState>,
+    State(state): State<ApiState>,
     config: extract::Json<AwsCloudtrailConfig>,
 ) -> Result<axum::Json<Value>, axum::response::ErrorResponse> {
     let id = Uuid::now_v7();
@@ -157,6 +159,13 @@ async fn post_aws_cloudtrail_config(
         id: id.to_string(),
         config: config.0,
     });
+
+    if let Some(db) = state.db.as_ref() {
+        let mut conn = db.get()
+        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
+        crate::persistence::add_source(&mut conn, &aws_cloudtrail)
+        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
+    }
 
     let mut sources = SOURCES.write().await;
     sources.push(aws_cloudtrail);

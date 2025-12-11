@@ -3,6 +3,7 @@ mod okta;
 use std::collections::BTreeMap;
 
 use axum::{Router, extract::State};
+use duckdb::arrow::error;
 use erased_serde as es;
 use serde::{Serialize, ser::SerializeMap};
 
@@ -33,7 +34,9 @@ pub struct Transform {
     #[serde(flatten)]
     _type: TransformType,
     inputs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     file: Option<String>,
 }
 
@@ -47,6 +50,7 @@ pub struct Transform {
 /// and OCSF normalization as logsource-{sourcetype}_{id}
 /// and ocsf-{sourcetype}_{id}
 pub trait Source: Send + Sync {
+
     fn id(&self) -> String;
 
     /// the Vector source type
@@ -73,6 +77,26 @@ pub trait Source: Send + Sync {
 
     fn preprocess_transforms(&self) -> Option<(BTreeMap<String, Transform>, String)> {
         None
+    }
+}
+
+pub type ExistingSource = (String, String, serde_json::Value);
+
+impl TryInto<Box<dyn Source>> for ExistingSource {
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    fn try_into(self) -> Result<Box<dyn Source>, Self::Error> {
+        let (sourcetype, id, config) = self;
+        match sourcetype.as_str() {
+            "aws_cloudtrail" => Ok(Box::new(aws_cloudtrail::AwsCloudtrail {
+                id,
+                config: serde_json::from_value(config).map_err(|e| anyhow::anyhow!(e))?,
+            })),
+            "okta" => Ok(Box::new(okta::Okta {
+                id,
+                config: serde_json::from_value(config).map_err(|e| anyhow::anyhow!(e))?,
+            })),
+            _ => Err(anyhow::anyhow!("Unsupported source type: {}", sourcetype))?
+        }
     }
 }
 

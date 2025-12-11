@@ -1,4 +1,4 @@
-use axum::{Router, extract, routing::post};
+use axum::{Router, extract::{self, State}, routing::post};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -46,8 +46,8 @@ impl<'de> Deserialize<'de> for OktaConfig {
 }
 
 pub struct Okta {
-    id: String,
-    config: OktaConfig,
+    pub(super) id: String,
+    pub(super) config: OktaConfig,
 }
 
 impl Source for Okta {
@@ -77,6 +77,7 @@ impl Source for Okta {
 }
 
 async fn post_okta_config(
+    State(state): State<ApiState>,
     config: extract::Json<OktaConfig>,
 ) -> Result<axum::Json<Value>, axum::response::ErrorResponse> {
     let id = Uuid::now_v7();
@@ -85,6 +86,13 @@ async fn post_okta_config(
         id: id.to_string(),
         config: config.0,
     });
+
+    if let Some(db) = state.db.as_ref() {
+        let mut conn = db.get()
+        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
+        crate::persistence::add_source(&mut conn, &okta)
+        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
+    }
 
     let mut sources = SOURCES.write().await;
     sources.push(okta);
