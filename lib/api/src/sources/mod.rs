@@ -3,10 +3,10 @@ mod okta;
 use std::collections::BTreeMap;
 
 use axum::{Router, extract::State};
-use duckdb::arrow::error;
 use erased_serde as es;
-use serde::{Serialize, ser::SerializeMap};
+use serde::{Deserialize, Serialize, ser::SerializeMap};
 
+use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
 use std::sync::LazyLock;
@@ -15,6 +15,22 @@ use crate::ApiState;
 
 pub(crate) static SOURCES: LazyLock<RwLock<Vec<Box<dyn Source>>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceType {
+    AwsCloudtrail,
+    Okta,
+}
+
+impl ToString for SourceType {
+    fn to_string(&self) -> String {
+        match self {
+            SourceType::AwsCloudtrail => "aws_cloudtrail".to_string(),
+            SourceType::Okta => "okta".to_string(),
+        }
+    }
+}
 
 #[derive(Serialize, Clone, Default)]
 #[serde(tag = "codec", rename_all = "snake_case")]
@@ -50,15 +66,14 @@ pub struct Transform {
 /// and OCSF normalization as logsource-{sourcetype}_{id}
 /// and ocsf-{sourcetype}_{id}
 pub trait Source: Send + Sync {
-
     fn id(&self) -> String;
 
     /// the Vector source type
-    fn sourcetype(&self) -> String;
+    fn sourcetype(&self) -> SourceType;
 
     /// A human friendly identifier
     fn friendly_id(&self) -> String {
-        self.sourcetype()
+        self.sourcetype().to_string()
     }
 
     /// Sigma taxonomy fields
@@ -83,7 +98,7 @@ pub trait Source: Send + Sync {
 pub type ExistingSource = (String, String, serde_json::Value);
 
 impl TryInto<Box<dyn Source>> for ExistingSource {
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = anyhow::Error;
     fn try_into(self) -> Result<Box<dyn Source>, Self::Error> {
         let (sourcetype, id, config) = self;
         match sourcetype.as_str() {
@@ -95,7 +110,7 @@ impl TryInto<Box<dyn Source>> for ExistingSource {
                 id,
                 config: serde_json::from_value(config).map_err(|e| anyhow::anyhow!(e))?,
             })),
-            _ => Err(anyhow::anyhow!("Unsupported source type: {}", sourcetype))?
+            _ => Err(anyhow::anyhow!("Unsupported source type: {}", sourcetype))?,
         }
     }
 }
@@ -105,9 +120,9 @@ impl Serialize for dyn Source {
     where
         S: serde::ser::Serializer,
     {
-        let source_id = format!("source-{}_{}", self.sourcetype(), self.id());
-        let logsource_id = format!("logsource-{}_{}", self.sourcetype(), self.id());
-        let ocsf_id = format!("ocsf-{}_{}", self.sourcetype(), self.id());
+        let source_id = format!("source-{}_{}", self.sourcetype().to_string(), self.id());
+        let logsource_id = format!("logsource-{}_{}", self.sourcetype().to_string(), self.id());
+        let ocsf_id = format!("ocsf-{}_{}", self.sourcetype().to_string(), self.id());
 
         let mut logsource = BTreeMap::new();
 
@@ -159,7 +174,11 @@ impl Serialize for dyn Source {
                 Transform {
                     inputs: vec![logsource_id],
                     source: None,
-                    file: Some(format!("{}/{}/remap.vrl", remaps_dir, self.sourcetype())),
+                    file: Some(format!(
+                        "{}/{}/remap.vrl",
+                        remaps_dir,
+                        self.sourcetype().to_string()
+                    )),
                     ..Default::default()
                 },
             ),
@@ -213,7 +232,7 @@ async fn get_source(
 }
 
 async fn delete_source(
-    State(_): State<ApiState>,
+    State(state): State<ApiState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<axum::Json<()>, (axum::http::StatusCode, String)> {
     let mut sources = SOURCES.write().await;
@@ -228,19 +247,64 @@ async fn delete_source(
             )
         })?;
 
+    if let Some(db) = state.db.as_ref() {
+        let mut conn = db
+            .get()
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        crate::persist::remove_source(&mut conn, &id)
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    };
+
     sources.remove(index);
 
     Ok(axum::Json(()))
 }
 
-#[allow(dead_code)]
+async fn add_source(
+    State(state): State<ApiState>,
+    axum::extract::Path(sourcetype): axum::extract::Path<SourceType>,
+    axum::extract::Json(config): axum::extract::Json<Value>,
+) -> Result<axum::Json<Value>, (axum::http::StatusCode, String)> {
+    let id = uuid::Uuid::now_v7().to_string();
+
+    let source: Box<dyn Source> = match sourcetype {
+        SourceType::AwsCloudtrail => {
+            let cfg = serde_json::from_value(config)
+                .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+            Box::new(aws_cloudtrail::AwsCloudtrail { id, config: cfg })
+        }
+        SourceType::Okta => {
+            let cfg = serde_json::from_value(config)
+                .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+            Box::new(okta::Okta { id, config: cfg })
+        }
+    };
+
+    let sourcetype = source.sourcetype();
+    let id = source.id();
+
+    if let Some(db) = state.db.as_ref() {
+        let mut conn = db
+            .get()
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        crate::persist::add_source(&mut conn, &source)
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    };
+
+    let mut sources = SOURCES.write().await;
+
+    sources.push(source);
+
+    Ok(axum::Json(json!({ id: sourcetype })))
+}
+
 pub fn create_router() -> axum::Router<ApiState> {
     Router::new()
         .route("/", axum::routing::get(list_sources))
         .route(
             "/{id}",
-            axum::routing::get(get_source).delete(delete_source),
+            axum::routing::get(get_source)
+                .delete(delete_source)
+                .post(add_source),
         )
-        .nest("/aws_cloudtrail", aws_cloudtrail::create_router())
-        .nest("/okta", okta::create_router())
 }

@@ -26,7 +26,6 @@ use crate::ApiState;
 async fn list_rules(
     State(state): State<ApiState>,
 ) -> Result<axum::Json<Vec<serde_json::Value>>, (axum::http::StatusCode, String)> {
-    
     let rules = serde_json::to_value(&*state.detections.read().await)
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .as_array()
@@ -120,8 +119,12 @@ async fn post_rule(
     body: String,
 ) -> Result<axum::Json<String>, (axum::http::StatusCode, String)> {
     // Parse the YAML content
-    let rule: sigmars::SigmaRule = serde_yaml::from_str(&body)
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("Invalid YAML: {}", e)))?;
+    let rule: sigmars::SigmaRule = serde_yaml::from_str(&body).map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Invalid YAML: {}", e),
+        )
+    })?;
     let id = rule.id.clone();
     let mut detections = state.detections.write().await;
     if let Some(_) = detections.get(&id) {
@@ -130,7 +133,8 @@ async fn post_rule(
             format!("Rule with id {} already exists", rule.id),
         ));
     }
-    detections.add(rule)
+    detections
+        .add(rule)
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(axum::Json(id))

@@ -2,7 +2,7 @@ mod actions;
 mod alerts;
 mod detections;
 pub mod features;
-mod persistence;
+mod persist;
 mod routes;
 mod server;
 mod sinks;
@@ -11,8 +11,8 @@ mod vector;
 
 pub use server::serve;
 
-use tokio::sync::RwLock;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use sigmars::SigmaCollection;
 use striem_config::StrIEMConfig;
@@ -57,7 +57,9 @@ pub(crate) fn db_pool(config: &StrIEMConfig) -> Option<Pool> {
             .ok()
     } else if let Some(_) = &config.storage {
         duckdb::DuckdbConnectionManager::memory_with_flags(
-            duckdb::Config::default().with("parquet_metadata_cache", "true").ok()?,
+            duckdb::Config::default()
+                .with("parquet_metadata_cache", "true")
+                .ok()?,
         )
         .map_err(anyhow::Error::from)
         .and_then(|db| Ok(r2d2::Pool::builder().build(db)?))

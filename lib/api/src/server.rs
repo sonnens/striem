@@ -26,13 +26,14 @@ use striem_common::prelude::*;
 use striem_config::StrIEMConfig;
 use striem_config::StringOrList;
 
-use crate::{actions::Mcp,
-    db_pool,
+use crate::{
     ApiState,
-    features::{feature_flag_middleware, FEATURE_FLAGS},
+    actions::Mcp,
+    db_pool,
+    features::{FEATURE_FLAGS, feature_flag_middleware},
+    persist,
     routes::create_router,
     sources::SOURCES,
-    persistence as persist
 };
 
 /// Initialize and run the API server.
@@ -57,13 +58,15 @@ pub async fn serve(
     };
 
     // Create DB connection pool
-    let db = db_pool(config)
-    .inspect(|_| {
-        FEATURE_FLAGS.write().map(|mut flags| {
-            if !flags.contains(&"persistence".to_string()) {
-                flags.push("persistence".to_string());
-            }
-        }).ok();
+    let db = db_pool(config).inspect(|_| {
+        FEATURE_FLAGS
+            .write()
+            .map(|mut flags| {
+                if !flags.contains(&"persistence".to_string()) {
+                    flags.push("persistence".to_string());
+                }
+            })
+            .ok();
     });
 
     if let Some(db) = db.as_ref() {
@@ -86,11 +89,14 @@ pub async fn serve(
         None
     }
     .inspect(|_| {
-        FEATURE_FLAGS.write().map(|mut flags| {
-            if !flags.contains(&"mcp".to_string()) {
-                flags.push("mcp".to_string());
-            }
-        }).ok();
+        FEATURE_FLAGS
+            .write()
+            .map(|mut flags| {
+                if !flags.contains(&"mcp".to_string()) {
+                    flags.push("mcp".to_string());
+                }
+            })
+            .ok();
     });
 
     let fqdn = match config.fqdn.as_ref() {
@@ -124,7 +130,6 @@ pub async fn serve(
         })
         .filter(|p| p.exists());
 
-    
     let mut app = create_router()
         .layer(CorsLayer::permissive())
         .layer(middleware::from_fn(feature_flag_middleware))

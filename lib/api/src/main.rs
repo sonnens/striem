@@ -3,7 +3,7 @@ use std::sync::Arc;
 use striem_api::serve;
 use striem_config::{StrIEMConfig, StringOrList};
 use tokio::main;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 #[main]
 async fn main() -> anyhow::Result<()> {

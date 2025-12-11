@@ -1,12 +1,6 @@
-use axum::{Router, extract::{self, State}, routing::post};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
-use crate::ApiState;
-
-use super::{SOURCES, Source};
-
-use uuid::Uuid;
+use super::{Source, SourceType};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OktaConfig {
@@ -59,8 +53,8 @@ impl Source for Okta {
         self.config.domain.clone()
     }
 
-    fn sourcetype(&self) -> String {
-        "okta".to_string()
+    fn sourcetype(&self) -> SourceType {
+        SourceType::Okta
     }
 
     fn config(&self) -> &dyn erased_serde::Serialize {
@@ -74,33 +68,4 @@ impl Source for Okta {
     fn logsource_product(&self) -> Option<String> {
         Some("audit".to_string())
     }
-}
-
-async fn post_okta_config(
-    State(state): State<ApiState>,
-    config: extract::Json<OktaConfig>,
-) -> Result<axum::Json<Value>, axum::response::ErrorResponse> {
-    let id = Uuid::now_v7();
-
-    let okta: Box<dyn Source> = Box::new(Okta {
-        id: id.to_string(),
-        config: config.0,
-    });
-
-    if let Some(db) = state.db.as_ref() {
-        let mut conn = db.get()
-        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
-        crate::persistence::add_source(&mut conn, &okta)
-        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
-    }
-
-    let mut sources = SOURCES.write().await;
-    sources.push(okta);
-    drop(sources);
-
-    Ok(axum::Json::from(json!({id.to_string(): "okta"})))
-}
-
-pub fn create_router() -> axum::Router<ApiState> {
-    Router::new().route("/", post(post_okta_config))
 }

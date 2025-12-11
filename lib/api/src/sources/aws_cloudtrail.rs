@@ -1,18 +1,9 @@
-use axum::{
-    Router,
-    extract::{self, State},
-    routing::post,
-};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use erased_serde as es;
 use std::{collections::BTreeMap, time::Duration};
-use uuid::Uuid;
 
-use crate::ApiState;
-
-use super::{Decoding, SOURCES, Source, Transform};
+use super::{Decoding, Source, SourceType, Transform};
 
 #[derive(Serialize, Deserialize)]
 pub struct ImdsAuthentication {
@@ -82,9 +73,8 @@ impl<'de> Deserialize<'de> for AwsCloudtrailConfig {
     where
         D: serde::de::Deserializer<'de>,
     {
-        #[derive(Deserialize)]
+        #[derive(Deserialize, Default)]
         struct AwsCloudtrailConfigHelper {
-            #[serde(default)]
             pub auth: Option<AwsAuthentication>,
             pub sqs: SqsConfig,
             pub region: Option<String>,
@@ -102,7 +92,7 @@ impl<'de> Deserialize<'de> for AwsCloudtrailConfig {
 }
 
 pub struct AwsCloudtrail {
-   pub(super) id: String,
+    pub(super) id: String,
     pub(super) config: AwsCloudtrailConfig,
 }
 
@@ -115,8 +105,8 @@ impl Source for AwsCloudtrail {
         self.config.sqs.queue_url.clone()
     }
 
-    fn sourcetype(&self) -> String {
-        "aws_cloudtrail".to_string()
+    fn sourcetype(&self) -> SourceType {
+        SourceType::AwsCloudtrail
     }
 
     fn config(&self) -> &dyn es::Serialize {
@@ -132,8 +122,8 @@ impl Source for AwsCloudtrail {
     }
 
     fn preprocess_transforms(&self) -> Option<(BTreeMap<String, Transform>, String)> {
-        let source_id = format!("source-{}_{}", self.sourcetype(), self.id());
-        let pre_id = format!("pre-{}_{}", self.sourcetype(), self.id());
+        let source_id = format!("source-{}_{}", self.sourcetype().to_string(), self.id());
+        let pre_id = format!("pre-{}_{}", self.sourcetype().to_string(), self.id());
 
         let transforms = BTreeMap::from([(
             pre_id.clone(),
@@ -146,34 +136,4 @@ impl Source for AwsCloudtrail {
         )]);
         Some((transforms, pre_id))
     }
-}
-
-#[allow(dead_code)]
-async fn post_aws_cloudtrail_config(
-    State(state): State<ApiState>,
-    config: extract::Json<AwsCloudtrailConfig>,
-) -> Result<axum::Json<Value>, axum::response::ErrorResponse> {
-    let id = Uuid::now_v7();
-
-    let aws_cloudtrail: Box<dyn Source> = Box::new(AwsCloudtrail {
-        id: id.to_string(),
-        config: config.0,
-    });
-
-    if let Some(db) = state.db.as_ref() {
-        let mut conn = db.get()
-        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
-        crate::persistence::add_source(&mut conn, &aws_cloudtrail)
-        .map_err(|e| axum::response::ErrorResponse::from(e.to_string()))?;
-    }
-
-    let mut sources = SOURCES.write().await;
-    sources.push(aws_cloudtrail);
-
-    Ok(axum::Json::from(json!({id.to_string(): "aws_cloudtrail"})))
-}
-
-#[allow(dead_code)]
-pub fn create_router() -> axum::Router<ApiState> {
-    Router::new().route("/", post(post_aws_cloudtrail_config))
 }
