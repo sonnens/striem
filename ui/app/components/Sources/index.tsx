@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import AddSource from "./AddSource";
+import { useFeatureFlags } from "@/include/features";
 
 interface SourceConfig {
   id: string;
-  friendly_id: string;
+  name: string;
   enabled: boolean;
   sourcetype?: string;
 }
@@ -21,6 +22,7 @@ export default function SourcesTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const { hasFeature } = useFeatureFlags();
 
   useEffect(() => {
     loadSources();
@@ -109,12 +111,14 @@ export default function SourcesTab() {
       <div className="panel flex-between">
         <h2 className="heading-section">Sources</h2>
         <div className="flex gap-2">
-          <button 
-            onClick={() => setShowAddModal(true)}
-            className="btn-primary"
-          >
-            Add Source
-          </button>
+          { hasFeature("duckdb") &&
+            <button 
+              onClick={() => setShowAddModal(true)}
+              className="btn-primary"
+            >
+              Add Source
+            </button>
+          }
           <button
             onClick={loadSources}
             className="btn-secondary"
@@ -153,7 +157,7 @@ export default function SourcesTab() {
                   {/* Name and toggle */}
                   <div className="flex-between">
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900">{source.friendly_id}</div>
+                      <div className="font-medium text-gray-900">{source.name}</div>
                       <div className="text-sm text-gray-500 font-mono mt-1">{source.id}</div>
                     </div>
                     <div className="ml-4">

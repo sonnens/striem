@@ -1,15 +1,22 @@
+"use client";
+
+import { useFeatureFlags } from "@/include/features";
+
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
 }
 
 export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+  const { hasFeature } = useFeatureFlags();
+  const hasDuckDB = hasFeature("duckdb");
+
   const tabs = [
-    { id: "sigma-rules", label: "Sigma Rules", icon: "📋" },
+    { id: "detections", label: "Sigma Rules", icon: "📋" },
     { id: "alerts", label: "Alerts", icon: "🚨" },
     { id: "sources", label: "Sources", icon: "🔗" },
     { id: "storage", label: "Storage", icon: "💾" },
-    { id: "explore", label: "Explore", icon: "🔍" },
+    ...(hasDuckDB ? [{ id: "explore", label: "Explore", icon: "🔍" }] : []),
   ];
 
   return (

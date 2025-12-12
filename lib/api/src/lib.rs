@@ -32,16 +32,15 @@ pub(crate) struct ApiState {
     pub actions: Option<Arc<Mcp>>,
     pub data: Option<String>,
     pub db: Option<Pool>,
-    pub vector: String,
-    pub fqdn: String,
+    pub config: StrIEMConfig,
 }
 
 #[cfg(feature = "duckdb")]
-pub(crate) fn db_pool(config: &StrIEMConfig) -> Option<Pool> {
+pub(crate) fn initdb(config: &StrIEMConfig) -> Option<Pool> {
     // Create DuckDB connection pool with metadata caching enabled
     // Metadata cache significantly improves query performance on large Parquet datasets
     // by avoiding repeated schema reads
-    if let Some(data_dir) = config.storage.as_ref().map(|s| &s.path) {
+    if let Some(ref data_dir) = config.db {
         std::fs::create_dir_all(data_dir)
             .map_err(anyhow::Error::from)
             .and_then(|_| {
@@ -53,6 +52,12 @@ pub(crate) fn db_pool(config: &StrIEMConfig) -> Option<Pool> {
                 .map_err(anyhow::Error::from)
                 .and_then(|db| Ok(r2d2::Pool::builder().build(db)?))
                 .map_err(anyhow::Error::from)
+            })
+            .and_then(|pool| {
+                let mut conn = pool.get()
+                .map_err(anyhow::Error::from)?;
+                crate::persist::init(&mut conn)?;
+                Ok(pool)
             })
             .ok()
     } else if let Some(_) = &config.storage {

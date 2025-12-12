@@ -9,5 +9,6 @@ config.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
+serde_json.workspace = true
 striem_common.workspace = true
 url.workspace = true

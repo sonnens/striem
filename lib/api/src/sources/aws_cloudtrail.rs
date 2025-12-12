@@ -101,7 +101,7 @@ impl Source for AwsCloudtrail {
         self.id.clone()
     }
 
-    fn friendly_id(&self) -> String {
+    fn name(&self) -> String {
         self.config.sqs.queue_url.clone()
     }
 

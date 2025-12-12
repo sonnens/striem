@@ -7,6 +7,8 @@ use tokio::sync::{RwLock, broadcast};
 
 #[main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
     let config = StrIEMConfig::new()?;
     let rules = if let Some(StringOrList::String(dir)) = &config.detections {
         dir.clone()

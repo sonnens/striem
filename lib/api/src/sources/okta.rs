@@ -49,7 +49,7 @@ impl Source for Okta {
         self.id.clone()
     }
 
-    fn friendly_id(&self) -> String {
+    fn name(&self) -> String {
         self.config.domain.clone()
     }
 

@@ -1,33 +1,67 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::StringOrList;
+use crate::{HostConfig, StringOrList};
 use striem_common::prelude::*;
 
 const TRUE: fn() -> bool = || true;
 
-fn default_address() -> String {
-    format!("127.0.0.1:{}", DEFAULT_API_LISTEN_PORT)
-}
-
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MCPConfig {
     pub url: StringOrList,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct UIConfig {
     #[serde(default = "TRUE")]
     pub enabled: bool,
     pub path: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ApiConfig {
-    #[serde(default = "TRUE")]
     pub enabled: bool,
-    #[serde(default = "default_address")]
-    pub address: String,
     pub data: Option<String>,
     pub mcp: Option<MCPConfig>,
     pub ui: Option<UIConfig>,
+    pub host: HostConfig,
+}
+
+impl<'de> Deserialize<'de> for ApiConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            enabled: Option<bool>,
+            host: Option<HostConfig>,
+            data: Option<String>,
+            mcp: Option<MCPConfig>,
+            ui: Option<UIConfig>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        Ok(ApiConfig {
+            enabled: helper.enabled.unwrap_or(true),
+            host: helper
+                .host
+                .unwrap_or_else(|| HostConfig::default().set_port(DEFAULT_API_LISTEN_PORT)),
+            data: helper.data,
+            mcp: helper.mcp,
+            ui: helper.ui,
+        })
+    }
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        ApiConfig {
+            enabled: true,
+            host: HostConfig::default().set_port(DEFAULT_API_LISTEN_PORT),
+            data: None,
+            mcp: None,
+            ui: Some(UIConfig::default()),
+        }
+    }
 }

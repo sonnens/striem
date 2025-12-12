@@ -71,8 +71,8 @@ pub trait Source: Send + Sync {
     /// the Vector source type
     fn sourcetype(&self) -> SourceType;
 
-    /// A human friendly identifier
-    fn friendly_id(&self) -> String {
+    /// A human friendly name
+    fn name(&self) -> String {
         self.sourcetype().to_string()
     }
 
@@ -202,7 +202,7 @@ async fn list_sources(State(_): State<ApiState>) -> axum::Json<Vec<serde_json::V
                 serde_json::json!({
                     "id": source.id(),
                     "sourcetype": source.sourcetype(),
-                    "friendly_id": source.friendly_id(),
+                    "name": source.name(),
                 })
             })
             .collect(),

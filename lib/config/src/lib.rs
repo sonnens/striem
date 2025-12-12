@@ -1,19 +1,19 @@
 //! Configuration management for StrIEM.
 //!
-//! Supports loading from:
-//! - YAML configuration files
+//! Uses [Config](https://docs.rs/config/latest/config/index.html), supports loading from:
+//! - Configuration files (YAML, JSON, TOML)
 //! - Environment variables (STRIEM_ prefix)
 //! - Defaults
 //!
 //! Environment variables override file settings, enabling Docker/K8s deployments
 //! without rebuilding config files.
 
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use url::Url;
 
 use anyhow::{Result, anyhow};
 use config::Config;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub mod api;
 pub mod input;
@@ -22,93 +22,133 @@ pub mod storage;
 
 mod tests;
 
-/// Configuration value that accepts either a single string or array of strings.
-/// Enables flexible YAML syntax: `detections: ./rules` or `detections: [./rules1, ./rules2]`
-#[derive(Debug, PartialEq, Deserialize, Clone)]
+/// Configuration value that accepts either a single string or array of strings
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum StringOrList {
     String(String),
     List(Vec<String>),
 }
 
-/// Host configuration with address/URL reconciliation.
-///
-/// # Reconciliation Logic
-/// Automatically synchronizes port between SocketAddr and URL.
-/// If URL is localhost/127.0.0.1, port is updated to match SocketAddr.
-/// This allows "address: 0.0.0.0:8080" to imply "url: http://localhost:8080".
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct HostConfig {
-    #[serde(default = "HostConfig::default_address")]
-    pub address: SocketAddr,
-    #[serde(default = "HostConfig::default_url")]
-    pub url: Url,
+    pub address: Option<SocketAddr>,
+    pub url: Option<Url>,
+    pub port: u16,
 }
 
 impl Default for HostConfig {
     fn default() -> Self {
         HostConfig {
-            address: HostConfig::default_address(),
-            url: HostConfig::default_url(),
+            address: Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))),
+            url: None,
+            port: 0,
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for HostConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct HostConfigHelper {
+            address: Option<SocketAddr>,
+            url: Option<Url>,
+            port: Option<u16>,
+        }
+
+        let helper = HostConfigHelper::deserialize(deserializer)?;
+
+        if helper.address.is_none() && helper.url.is_none() {
+            return Err(serde::de::Error::custom(
+                "HostConfig requires either 'address' or 'url'",
+            ));
+        }
+
+        let port = if let Some(p) = helper.port {
+            p
+        } else if let Some(addr) = helper.address
+            && addr.port() != 0
+        {
+            addr.port()
+        } else if let Some(url) = &helper.url {
+            url.port().unwrap_or(0)
+        } else {
+            unreachable!()
+        };
+
+        Ok(HostConfig {
+            address: helper.address,
+            url: helper.url,
+            port,
+        })
     }
 }
 
 impl HostConfig {
-    fn default_address() -> SocketAddr {
-        SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0).into()
-    }
-
-    fn default_url() -> Url {
-        Url::parse("http://localhost").expect("Invalid default URL")
-    }
-
-    pub fn set_port(mut self, port: u16) -> Self {
-        self.address.set_port(port);
-        self.reconcile();
-        self
-    }
-
-    /// Synchronize port between address and URL for localhost/loopback addresses.
-    ///
-    /// # Use Case
-    /// When user specifies only `address: 0.0.0.0:3000`, infer that
-    /// `url: http://localhost:3000` for generating Vector configs.
-    ///
-    /// Only updates URL port if host is localhost/127.0.0.1 to avoid
-    /// breaking external/cluster URLs.
-    pub fn reconcile(&mut self) {
-        if self.address.port() == 0 {
-            if let Some(port) = self.url.port() {
-                self.address.set_port(port);
+    pub fn address(&self) -> SocketAddr {
+        if let Some(addr) = self.address {
+            if addr.port() == 0 {
+                let mut addr = addr;
+                addr.set_port(self.port);
+                addr
+            } else {
+                addr
             }
         } else {
-            if let Some(host) = self.url.host_str() {
-                if host == "localhost" {
-                    self.url
-                        .set_port(Some(self.address.port()))
-                        .expect("Invalid port");
-                } else if let Ok(ip) = host.parse::<SocketAddr>() {
-                    if ip.ip().is_loopback() {
-                        self.url
-                            .set_port(Some(self.address.port()))
-                            .expect("Invalid port");
+            match &self.url {
+                Some(url) => match url.host() {
+                    Some(url::Host::Domain(host)) => {
+                        if host == "localhost" {
+                            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port))
+                        } else {
+                            host.parse::<SocketAddr>().unwrap_or_else(|_| {
+                                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port))
+                            })
+                        }
                     }
+                    Some(url::Host::Ipv4(ip)) => SocketAddr::V4(SocketAddrV4::new(ip, self.port)),
+                    Some(url::Host::Ipv6(ip)) => {
+                        SocketAddr::V6(SocketAddrV6::new(ip, self.port, 0, 0))
+                    }
+                    None => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, self.port)),
+                },
+                None => unreachable!(),
+            }
+        }
+    }
+
+    pub fn url(&self) -> String {
+        match &self.url {
+            Some(url) => url.to_string(),
+            None => {
+                if self.address().ip().is_unspecified() {
+                    format!("http://localhost:{}", self.port)
+                } else {
+                    format!("http://{}", self.address().to_string())
                 }
             }
         }
     }
+    pub fn set_port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
 }
 
-const PWD: fn() -> String = || std::env::current_dir().and_then(|p| Ok(p.to_string_lossy().into()))
-    .unwrap_or_else(|_| ".".into());
+const CWD: fn() -> String = || {
+    std::env::current_dir()
+        .and_then(|p| Ok(p.to_string_lossy().into()))
+        .unwrap_or_else(|e| panic!("Failed to get current working directory: {}", e))
+};
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 struct StrIEMConfigOptions {
-
     /// Path to the StrIEM source configuration & rule database
     /// (defaults to current working directory)
-    #[serde(default = "PWD")]
+    #[serde(default = "CWD")]
     db: String,
 
     /// Location of top-level Sigma detection directory
@@ -125,7 +165,6 @@ struct StrIEMConfigOptions {
     output: Option<output::Destination>,
 
     /// Storage backend configuration
-    #[serde(with = "serde_yaml::with::singleton_map")]
     storage: Option<storage::StorageConfig>,
 
     /// API server configuration
@@ -137,6 +176,8 @@ struct StrIEMConfigOptions {
 
 #[derive(Debug, Clone)]
 pub struct StrIEMConfig {
+    pub db: Option<String>,
+
     pub detections: Option<StringOrList>,
 
     pub input: input::Listener,
@@ -152,15 +193,11 @@ pub struct StrIEMConfig {
 
 impl Into<StrIEMConfig> for StrIEMConfigOptions {
     fn into(self) -> StrIEMConfig {
-        let mut input = self.input.unwrap_or_default();
-        input.reconcile();
         StrIEMConfig {
+            db: Some(self.db.clone()),
             detections: self.detections,
-            input: input,
-            output: self.output.map(|mut o| {
-                o.reconcile();
-                o
-            }),
+            input: self.input.unwrap_or_default(),
+            output: self.output,
             storage: self.storage,
             api: self.api.unwrap_or_default(),
             fqdn: self.fqdn,
@@ -171,10 +208,15 @@ impl Into<StrIEMConfig> for StrIEMConfigOptions {
 impl StrIEMConfig {
     pub fn new() -> Result<Self> {
         let builder = Config::builder()
+            .add_source(config::File::from_str(
+                serde_json::to_string(&StrIEMConfigOptions::default())?.as_str(),
+                config::FileFormat::Json,
+            ))
             .add_source(config::Environment::with_prefix("STRIEM").separator("_"))
             .build()?;
 
         let config: StrIEMConfigOptions = builder.try_deserialize()?;
+
         Self::check(&config)?;
 
         Ok(config.into())
@@ -182,6 +224,10 @@ impl StrIEMConfig {
 
     pub fn from_file(file: &str) -> Result<Self> {
         let builder = Config::builder()
+            .add_source(config::File::from_str(
+                serde_json::to_string(&StrIEMConfigOptions::default())?.as_str(),
+                config::FileFormat::Json,
+            ))
             .add_source(config::File::with_name(file))
             .add_source(config::Environment::with_prefix("STRIEM").separator("_"))
             .build()?;
@@ -194,7 +240,43 @@ impl StrIEMConfig {
 
     pub fn from_yaml(s: &str) -> Result<Self> {
         let builder = Config::builder()
+            .add_source(config::File::from_str(
+                serde_json::to_string(&StrIEMConfigOptions::default())?.as_str(),
+                config::FileFormat::Json,
+            ))
             .add_source(config::File::from_str(s, config::FileFormat::Yaml))
+            .add_source(config::Environment::with_prefix("STRIEM").separator("_"))
+            .build()?;
+
+        let config: StrIEMConfigOptions = builder.try_deserialize()?;
+        Self::check(&config)?;
+
+        Ok(config.into())
+    }
+
+    pub fn from_json(s: &str) -> Result<Self> {
+        let builder = Config::builder()
+            .add_source(config::File::from_str(
+                serde_json::to_string(&StrIEMConfigOptions::default())?.as_str(),
+                config::FileFormat::Json,
+            ))
+            .add_source(config::File::from_str(s, config::FileFormat::Json))
+            .add_source(config::Environment::with_prefix("STRIEM").separator("_"))
+            .build()?;
+
+        let config: StrIEMConfigOptions = builder.try_deserialize()?;
+        Self::check(&config)?;
+
+        Ok(config.into())
+    }
+
+    pub fn from_toml(s: &str) -> Result<Self> {
+        let builder = Config::builder()
+            .add_source(config::File::from_str(
+                serde_json::to_string(&StrIEMConfigOptions::default())?.as_str(),
+                config::FileFormat::Json,
+            ))
+            .add_source(config::File::from_str(s, config::FileFormat::Toml))
             .add_source(config::Environment::with_prefix("STRIEM").separator("_"))
             .build()?;
 

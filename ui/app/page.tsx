@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useFeatureFlags } from "@/include/features";
 import Sidebar from "@components/Sidebar";
 import RulesTab from "@components/Rules";
 import AlertsTab from "@components/Alerts";
@@ -9,17 +10,23 @@ import StorageTab from "@components/Storage";
 import ExploreTab from "@components/Explore";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState("sigma-rules");
+  const [activeTab, setActiveTab] = useState("detections");
+  const { features, hasFeature } = useFeatureFlags();
+
+  const hasDuckDB = hasFeature("duckdb");
 
   return (
     <div className="font-sans flex h-screen bg-gray-100">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar 
+        activeTab={activeTab} 
+        onTabChange={setActiveTab}
+      />
       <main className="flex-1 overflow-hidden">
-        {activeTab === "sigma-rules" && <RulesTab />}
+        {activeTab === "detections" && <RulesTab />}
         {activeTab === "alerts" && <AlertsTab />}
         {activeTab === "sources" && <SourcesTab />}
         {activeTab === "storage" && <StorageTab />}
-        {activeTab === "explore" && <ExploreTab />}
+        {activeTab === "explore" && hasDuckDB && <ExploreTab />}
       </main>
     </div>
   );

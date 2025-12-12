@@ -3,17 +3,16 @@ use axum::{Router, extract::State, routing::get};
 use toml::{Table, toml};
 
 async fn get_vector_config(State(state): State<ApiState>) -> String {
-    let listen = state.vector.clone();
-    let fqdn = state.fqdn.clone();
+
+    let fqdn = state.config.fqdn.as_ref().map(|f| f.clone()).unwrap_or_else(|| {
+        state.config.input.url()
+    });
+
     let mut config = toml! {
         [schema]
         log_namespace = true
 
-        [sources.source-striem]
-        type = "vector"
-        address = listen
-        version = "2"
-
+        // this ensures the ocsf-* wildcard input always has at least one producer
         [sources.ocsf-stdin]
         type = "stdin"
         decoding = { codec = "json" }
@@ -24,6 +23,22 @@ async fn get_vector_config(State(state): State<ApiState>) -> String {
         inputs = ["ocsf-*"]
         address = fqdn
     };
+
+    if let Some(ref cfg) = state.config.output {
+        config.entry("sources")
+        .or_insert_with(|| toml::Table::new().into())
+        .as_table_mut()
+        .map(|sources| {
+            let address = cfg.address().to_string();
+            let source_striem = toml! {
+                ["source-striem"]
+                type = "vector"
+                address = address
+                version = "2"
+            };
+            sources.extend(source_striem);
+        });
+    }
 
     SOURCES.read().await.iter().for_each(|source| {
         Table::try_from(source)

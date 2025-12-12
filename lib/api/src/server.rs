@@ -22,14 +22,13 @@ use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
-use striem_common::prelude::*;
 use striem_config::StrIEMConfig;
 use striem_config::StringOrList;
 
 use crate::{
     ApiState,
     actions::Mcp,
-    db_pool,
+    initdb,
     features::{FEATURE_FLAGS, feature_flag_middleware},
     persist,
     routes::create_router,
@@ -58,23 +57,23 @@ pub async fn serve(
     };
 
     // Create DB connection pool
-    let db = db_pool(config).inspect(|_| {
+    let db = initdb(config).inspect(|_| {
         FEATURE_FLAGS
             .write()
             .map(|mut flags| {
-                if !flags.contains(&"persistence".to_string()) {
-                    flags.push("persistence".to_string());
+                if !flags.contains(&"persist".to_string()) {
+                    flags.push("persist".to_string());
                 }
             })
             .ok();
     });
 
     if let Some(db) = db.as_ref() {
-        // Initialize persistence layer
-        let mut conn = db.get()?;
-        persist::init(&mut conn)?;
+        let mut conn = db
+            .get()
+            .map_err(|e| anyhow::anyhow!("Failed to get DB connection: {}", e))?;
         let mut sources = SOURCES.write().await;
-        sources.append(&mut persist::get_all_sources(&mut conn)?);
+        sources.append(&mut persist::sources(&mut conn).unwrap_or_default());
     };
 
     let actions = if let Some(mcp_config) = &config.api.mcp {
@@ -99,11 +98,13 @@ pub async fn serve(
             .ok();
     });
 
+    /*
     let fqdn = match config.fqdn.as_ref() {
         Some(fqdn) => fqdn.clone(),
         None => config.input.url(),
-    };
+    };*/
 
+    /*
     let vector = config
         .output
         .as_ref()
@@ -111,7 +112,7 @@ pub async fn serve(
             striem_config::output::Destination::Vector(v) => v.cfg.address.to_string(),
             _ => "".to_string(),
         })
-        .unwrap_or_else(|| format!("0.0.0.0:{}", DEFAULT_VECTOR_LISTEN_PORT));
+        .unwrap_or_else(|| format!("0.0.0.0:{}", DEFAULT_VECTOR_LISTEN_PORT));*/
 
     let ui = config
         .api
@@ -138,8 +139,9 @@ pub async fn serve(
             actions,
             data,
             db,
-            vector,
-            fqdn,
+            config: config.clone(),
+            //vector,
+            //fqdn,
         });
 
     if let Some(path) = ui {
@@ -153,7 +155,8 @@ pub async fn serve(
                 axum::routing::get(|| async { axum::response::Redirect::to("/ui") }),
             );
     }
-    let listener = tokio::net::TcpListener::bind(&config.api.address).await?;
+
+    let listener = tokio::net::TcpListener::bind(&config.api.host.address()).await?;
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

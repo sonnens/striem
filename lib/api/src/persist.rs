@@ -40,7 +40,7 @@ pub mod duckdb {
         Ok(())
     }
 
-    pub fn get_all_sources(
+    pub fn sources(
         db: &mut PooledConnection<DuckdbConnectionManager>,
     ) -> Result<Vec<Box<dyn Source>>> {
         let sql = "SELECT type, id, config FROM sources";
