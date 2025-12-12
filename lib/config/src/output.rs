@@ -38,6 +38,7 @@ pub struct VectorDestinationConfig {
     pub hec: Option<HostConfig>,
     /// Optional HTTP endpoint for Vector to forward events
     pub http: Option<HostConfig>,
+    pub api: Option<HostConfig>,
 }
 
 impl<'de> Deserialize<'de> for VectorDestinationConfig {
@@ -51,6 +52,7 @@ impl<'de> Deserialize<'de> for VectorDestinationConfig {
             cfg: HostConfig,
             hec: Option<HostConfig>,
             http: Option<HostConfig>,
+            api: Option<HostConfig>,
         }
 
         let mut helper = Helper::deserialize(deserializer)?;
@@ -68,10 +70,16 @@ impl<'de> Deserialize<'de> for VectorDestinationConfig {
                 http.port = DEFAULT_VECTOR_HTTP_LISTEN_PORT;
             }
         }
+        if let Some(api) = &mut helper.api {
+            if api.port == 0 {
+                api.port = DEFAULT_VECTOR_API_LISTEN_PORT;
+            }
+        }
         Ok(VectorDestinationConfig {
             cfg: helper.cfg,
             hec: helper.hec,
             http: helper.http,
+            api: helper.api,
         })
     }
 }
