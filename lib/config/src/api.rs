@@ -34,6 +34,7 @@ impl<'de> Deserialize<'de> for ApiConfig {
         #[derive(Deserialize)]
         struct Helper {
             enabled: Option<bool>,
+            #[serde(flatten)]
             host: Option<HostConfig>,
             data: Option<String>,
             mcp: Option<MCPConfig>,
@@ -42,8 +43,12 @@ impl<'de> Deserialize<'de> for ApiConfig {
 
         let helper = Helper::deserialize(deserializer)?;
 
+        let enabled = helper.enabled.unwrap_or_else(|| {
+            helper.host.is_some() || helper.ui.is_some()
+        });
+
         Ok(ApiConfig {
-            enabled: helper.enabled.unwrap_or(true),
+            enabled,
             host: helper
                 .host
                 .unwrap_or_else(|| HostConfig::default().set_port(DEFAULT_API_LISTEN_PORT)),

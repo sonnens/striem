@@ -20,11 +20,12 @@ services:
     environment:
       - RUST_LOG=info
       - STRIEM_DB=/data
+      - STRIEM_API_ENABLED=1
       - STRIEM_API_ADDRESS=0.0.0.0:8080
-      - STRIEM_OUTPUT_VECTOR_ADDRESS=0.0.0.0:9000
-      - STRIEM_OUTPUT_VECTOR_URL=http://vector:9000
-      - STRIEM_INPUT_VECTOR_ADDRESS=0.0.0.0:3000
       - STRIEM_INPUT_VECTOR_URL=http://striem:3000
+      - STRIEM_OUTPUT_VECTOR_URL=http://vector:9000
+      - STRIEM_OUTPUT_VECTOR_HTTP_ADDRESS=0.0.0.0:8000
+      - STRIEM_OUTPUT_VECTOR_HEC_ADDRESS=0.0.0.0:8008
       - STRIEM_DETECTIONS=/data/detections
       - STRIEM_STORAGE_SCHEMA=/data/schema/1.4.0
       - STRIEM_STORAGE_PATH=/data/storage

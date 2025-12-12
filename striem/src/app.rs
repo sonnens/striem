@@ -143,14 +143,14 @@ impl App {
         }
 
         if let Some(Destination::Vector(ref vector)) = self.config.output {
-            info!("... initializing Vector output to {}", vector.cfg.url);
+            info!("... initializing Vector output to {}", vector.cfg.url());
             self.run_vector(vector).await?;
         }
 
         let shutdown = self.shutdown.subscribe();
         if let Listener::Vector(ref vector) = self.config.input {
-            info!("... listening for Vector events on {}", vector.address);
-            self.server.serve(&vector.address, shutdown).await?;
+            info!("... listening for Vector events on {}", vector.url());
+            self.server.serve(&vector.address(), shutdown).await?;
         }
 
         Ok(())
@@ -190,7 +190,7 @@ impl App {
         &self,
         vector: &striem_config::output::VectorDestinationConfig,
     ) -> Result<()> {
-        let url = vector.cfg.url.to_string();
+        let url = vector.cfg.url();
         let rx_internal = self.channel.subscribe();
         let shutdown = self.shutdown.subscribe();
         tokio::spawn(async move {

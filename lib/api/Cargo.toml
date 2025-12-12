@@ -8,8 +8,8 @@ name = "striem_api"
 path = "src/main.rs"
 
 [dependencies]
-striem_common.workspace = true
-striem_config.workspace = true
+striem_common = {"path" = "../common"}
+striem_config = {"path" = "../config"}
 
 anyhow.workspace = true
 axum.workspace = true

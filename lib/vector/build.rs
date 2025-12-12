@@ -29,7 +29,7 @@ fn main() {
                 &proto_dir.join("vector.proto"),
                 &proto_dir.join("event.proto"),
             ],
-            &[&proto_dir],
+            &[&proto_dir, &Path::new("/usr/include").to_path_buf()],
         )
         .unwrap();
 }

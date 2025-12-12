@@ -140,8 +140,6 @@ pub async fn serve(
             data,
             db,
             config: config.clone(),
-            //vector,
-            //fqdn,
         });
 
     if let Some(path) = ui {
@@ -157,6 +155,11 @@ pub async fn serve(
     }
 
     let listener = tokio::net::TcpListener::bind(&config.api.host.address()).await?;
+
+    log::info!(
+        "API server listening on http://{}",
+        config.api.host.address()
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

@@ -1,51 +1,13 @@
-[package]
-name = "striem"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-striem_api.workspace = true
-striem_common.workspace = true
-striem_config.workspace = true
-striem_storage.workspace = true
-striem_vector.workspace = true
-
-anyhow.workspace = true
-async-trait.workspace = true
-backoff.workspace = true
-env_logger.workspace = true
-futures = "0.3.31"
-futures-util.workspace = true
-glob.workspace = true
-log.workspace = true
-serde_json.workspace = true
-serde_yaml.workspace = true
-sigmars.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
-
-[features]
-default = ["duckdb"]
-duckdb = ["striem_api/duckdb"]
-sqlite = ["striem_api/sqlite"]
-
 [workspace]
+resolver = "3"
+
+default-members = ["striem"]
+
 members = [
-  ".",
-  "lib/api",
-  "lib/common",
-  "lib/config",
-  "lib/storage",
-  "lib/vector"]
+  "striem",
+  "lib/*"]
 
 [workspace.dependencies]
-
-striem_api.path = "lib/api"
-striem_common.path = "lib/common"
-striem_config.path = "lib/config"
-striem_storage.path = "lib/storage"
-striem_vector.path = "lib/vector"
-
 anyhow = "1.0"
 arc-swap = "1"
 arrow = "56.2"
@@ -57,6 +19,7 @@ config = "0.15"
 duckdb = { version = "1.4", features = ["modern-full", "json", "parquet", "vtab", "bundled", "r2d2" ] }
 env_logger = "0.11"
 erased-serde = "0.4"
+futures = "0.3.31"
 futures-util = "0.3"
 glob = "0.3"
 lazy_static = {version = "1.5"}
