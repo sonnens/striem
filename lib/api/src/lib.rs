@@ -9,6 +9,7 @@ mod sinks;
 mod sources;
 mod vector;
 
+use axum::http::HeaderValue;
 pub use server::serve;
 
 use std::sync::Arc;
@@ -32,6 +33,7 @@ pub(crate) struct ApiState {
     pub actions: Option<Arc<Mcp>>,
     pub data: Option<String>,
     pub db: Option<Pool>,
+    pub features: HeaderValue,
     pub config: StrIEMConfig,
 }
 
@@ -54,8 +56,7 @@ pub(crate) fn initdb(config: &StrIEMConfig) -> Option<Pool> {
                 .map_err(anyhow::Error::from)
             })
             .and_then(|pool| {
-                let mut conn = pool.get()
-                .map_err(anyhow::Error::from)?;
+                let mut conn = pool.get().map_err(anyhow::Error::from)?;
                 crate::persist::init(&mut conn)?;
                 Ok(pool)
             })

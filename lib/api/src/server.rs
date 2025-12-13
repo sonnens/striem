@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use axum::http::HeaderValue;
 use axum::middleware;
 use log::info;
 use sigmars::SigmaCollection;
@@ -26,13 +27,8 @@ use striem_config::StrIEMConfig;
 use striem_config::StringOrList;
 
 use crate::{
-    ApiState,
-    actions::Mcp,
-    initdb,
-    features::{FEATURE_FLAGS, feature_flag_middleware},
-    persist,
-    routes::create_router,
-    sources::SOURCES,
+    ApiState, actions::Mcp, features::feature_flag_middleware, initdb, persist,
+    routes::create_router, sources::SOURCES,
 };
 
 /// Initialize and run the API server.
@@ -56,16 +52,12 @@ pub async fn serve(
         None
     };
 
+    let mut features: Vec<String> = Vec::new();
+
     // Create DB connection pool
     let db = initdb(config).inspect(|_| {
-        FEATURE_FLAGS
-            .write()
-            .map(|mut flags| {
-                if !flags.contains(&"persist".to_string()) {
-                    flags.push("persist".to_string());
-                }
-            })
-            .ok();
+        #[cfg(feature = "duckdb")]
+        features.push("duckdb".to_string());
     });
 
     if let Some(db) = db.as_ref() {
@@ -88,31 +80,8 @@ pub async fn serve(
         None
     }
     .inspect(|_| {
-        FEATURE_FLAGS
-            .write()
-            .map(|mut flags| {
-                if !flags.contains(&"mcp".to_string()) {
-                    flags.push("mcp".to_string());
-                }
-            })
-            .ok();
+        features.push("mcp".to_string());
     });
-
-    /*
-    let fqdn = match config.fqdn.as_ref() {
-        Some(fqdn) => fqdn.clone(),
-        None => config.input.url(),
-    };*/
-
-    /*
-    let vector = config
-        .output
-        .as_ref()
-        .map(|o| match o {
-            striem_config::output::Destination::Vector(v) => v.cfg.address.to_string(),
-            _ => "".to_string(),
-        })
-        .unwrap_or_else(|| format!("0.0.0.0:{}", DEFAULT_VECTOR_LISTEN_PORT));*/
 
     let ui = config
         .api
@@ -131,16 +100,22 @@ pub async fn serve(
         })
         .filter(|p| p.exists());
 
+    let state = ApiState {
+        detections,
+        actions,
+        data,
+        db,
+        config: config.clone(),
+        features: HeaderValue::from_str(&features.join(","))?,
+    };
+
     let mut app = create_router()
         .layer(CorsLayer::permissive())
-        .layer(middleware::from_fn(feature_flag_middleware))
-        .with_state(ApiState {
-            detections,
-            actions,
-            data,
-            db,
-            config: config.clone(),
-        });
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            feature_flag_middleware,
+        ))
+        .with_state(state);
 
     if let Some(path) = ui {
         app = app
